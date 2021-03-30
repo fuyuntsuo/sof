@@ -121,7 +121,7 @@ static void test_math_trig_sin_fixed(void **state)
 		double rad = M_PI / (180.0 / theta);
 		int32_t rad_q28 = Q_CONVERT_FLOAT(rad, 28);
 
-		float r = Q_CONVERT_QTOF(sin_fixed(rad_q28), 31);
+		float r = Q_CONVERT_QTOF(sin_fixed(rad_q28), 30);
 		float diff = fabsf(sin_ref_table[theta] - r);
 
 		if (diff > CMP_TOLERANCE) {

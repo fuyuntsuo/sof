@@ -114,6 +114,7 @@ inline int32_t drc_sin_fixed(int32_t x)
 
 	/* input range of sin_fixed() is non-negative */
 	int32_t abs_sin_val = sin_fixed(q_mult(ABS(x), PI_OVER_TWO, 30, 30, 28));
+	abs_sin_val = sat_int32(Q_SHIFT_LEFT((int64_t)abs_sin_val, 30, 31));
 	return SGN(x) < 0 ? -abs_sin_val : abs_sin_val;
 }
 
