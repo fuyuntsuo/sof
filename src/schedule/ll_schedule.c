@@ -165,6 +165,8 @@ static void schedule_ll_clients_reschedule(struct ll_schedule_data *sch)
 
 	/* rearm only if there is work to do */
 	if (atomic_read(&sch->domain->total_num_tasks)) {
+		domain_set(sch->domain, next_tick);
+		schedule_ll_clients_enable(sch);
 		/* traverse to set timer according to the earliest task */
 		list_for_item_safe(wlist, tlist, &sch->tasks) {
 			task = container_of(wlist, struct task, list);
@@ -176,7 +178,7 @@ static void schedule_ll_clients_reschedule(struct ll_schedule_data *sch)
 			}
 		}
 
-		tr_dbg(&ll_tr,
+		tr_info(&ll_tr,
 		       "schedule_ll_clients_reschedule next_tick %u task_take %p",
 		       (unsigned int)next_tick, task_take_dbg);
 		domain_set(sch->domain, next_tick);
@@ -191,7 +193,7 @@ static void schedule_ll_tasks_run(void *data)
 	uint32_t num_clients = 0;
 	uint32_t flags;
 
-	tr_dbg(&ll_tr, "timer interrupt on core %d, at %u, previous next_tick %u",
+	tr_info(&ll_tr, "timer interrupt on core %d, at %u, previous next_tick %u",
 	       cpu_get_id(),
 	       (unsigned int)platform_timer_get_atomic(timer_get()),
 	       (unsigned int)sch->domain->next_tick);
@@ -232,7 +234,8 @@ static void schedule_ll_tasks_run(void *data)
 
 	spin_lock(&sch->domain->lock);
 
-	schedule_ll_clients_reschedule(sch);
+//	if (!num_clients)
+		schedule_ll_clients_reschedule(sch);
 
 	/* re-enable domain only if all clients are done */
 	if (!num_clients)
