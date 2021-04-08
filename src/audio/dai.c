@@ -934,18 +934,6 @@ static int dai_config(struct comp_dev *dev, struct sof_ipc_dai_config *config)
 	case SOF_DAI_INTEL_HDA:
 		channel = config->hda.link_dma_ch;
 		comp_info(dev, "dai_config(), channel = %d", channel);
-
-		/*
-		 * For HDA DAIs, the driver sends the DAI_CONFIG IPC
-		 * during every link hw_params and hw_free, apart from the
-		 * the first DAI_CONFIG IPC sent during topology parsing.
-		 * Free the channel that is currently in use before
-		 * assigning the new one.
-		 */
-		if (dd->chan) {
-			dma_channel_put(dd->chan);
-			dd->chan = NULL;
-		}
 		break;
 	case SOF_DAI_INTEL_ALH:
 		/* SDW HW FIFO always requires 32bit MSB aligned sample data for
@@ -987,17 +975,21 @@ static int dai_config(struct comp_dev *dev, struct sof_ipc_dai_config *config)
 		break;
 	}
 
+	/* put the allocated DMA channel first */
+	if (dd->chan) {
+		dma_channel_put(dd->chan);
+		dd->chan = NULL;
+
+		/* remove callback */
+		notifier_unregister(dev, dd->chan,
+				    NOTIFIER_ID_DMA_COPY);
+	}
+
 	platform_shared_commit(dd->dai, sizeof(*dd->dai));
 
+	/* allocate new DMA channel if needed */
 	if (channel != DMA_CHAN_INVALID) {
-		if (dd->chan)
-			/* remove callback */
-			notifier_unregister(dev, dd->chan,
-					    NOTIFIER_ID_DMA_COPY);
-		else
-			/* get dma channel at first config only */
-			dd->chan = dma_channel_get(dd->dma, channel);
-
+		dd->chan = dma_channel_get(dd->dma, channel);
 		if (!dd->chan) {
 			comp_err(dev, "dai_config(): dma_channel_get() failed");
 			dd->chan = NULL;
