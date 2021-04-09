@@ -167,8 +167,6 @@ static int timer_domain_register(struct ll_schedule_domain *domain,
 	k_delayed_work_init(&zdata[core].work, timer_z_handler);
 
 #else
-	tr_info(&ll_tr, "timer_domain->arg[%d] %p",
-		core, timer_domain->arg[core]);
 	/* tasks already registered on this core */
 	if (timer_domain->arg[core])
 		goto out;
