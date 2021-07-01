@@ -109,7 +109,6 @@ int comp_verify_params(struct comp_dev *dev, uint32_t flag,
 	struct comp_buffer *sinkb;
 	struct comp_buffer *buf;
 	int dir = dev->direction;
-	uint32_t flags = 0;
 
 	if (!params) {
 		comp_err(dev, "comp_verify_params(): !params");
@@ -132,7 +131,7 @@ int comp_verify_params(struct comp_dev *dev, uint32_t flag,
 					      struct comp_buffer,
 					      source_list);
 
-		buffer_lock(buf, &flags);
+		buf = buffer_acquire(buf);
 
 		/* update specific pcm parameter with buffer parameter if
 		 * specific flag is set.
@@ -147,7 +146,7 @@ int comp_verify_params(struct comp_dev *dev, uint32_t flag,
 		/* set component period frames */
 		component_set_period_frames(dev, buf->stream.rate);
 
-		buffer_unlock(buf, flags);
+		buffer_release(buf);
 	} else {
 		/* for other components we iterate over all downstream buffers
 		 * (for playback) or upstream buffers (for capture).
@@ -157,21 +156,29 @@ int comp_verify_params(struct comp_dev *dev, uint32_t flag,
 
 		while (clist != buffer_list) {
 			curr = clist;
+
 			buf = buffer_from_list(curr, struct comp_buffer, dir);
-			buffer_lock(buf, &flags);
+
+			buf = buffer_acquire(buf);
+
 			clist = clist->next;
+
 			comp_update_params(flag, params, buf);
+
 			buffer_set_params(buf, params, BUFFER_UPDATE_FORCE);
-			buffer_unlock(buf, flags);
+
+			buffer_release(buf);
 		}
 
 		/* fetch sink buffer in order to calculate period frames */
 		sinkb = list_first_item(&dev->bsink_list, struct comp_buffer,
 					source_list);
 
-		buffer_lock(sinkb, &flags);
+		sinkb = buffer_acquire(sinkb);
+
 		component_set_period_frames(dev, sinkb->stream.rate);
-		buffer_unlock(sinkb, flags);
+
+		buffer_release(sinkb);
 	}
 
 	return 0;
@@ -180,25 +187,7 @@ int comp_verify_params(struct comp_dev *dev, uint32_t flag,
 int comp_buffer_connect(struct comp_dev *comp, uint32_t comp_core,
 			struct comp_buffer *buffer, uint32_t buffer_core, uint32_t dir)
 {
-	int ret;
-
-	/* check if it's a connection between cores */
-	if (buffer_core != comp_core) {
-		dcache_invalidate_region(buffer, sizeof(*buffer));
-
-		buffer->inter_core = true;
-
-		if (!comp->is_shared) {
-			comp = comp_make_shared(comp);
-			if (!comp)
-				return -ENOMEM;
-		}
-	}
-
-	ret = pipeline_connect(comp, buffer, dir);
-	dcache_writeback_invalidate_region(buffer, sizeof(*buffer));
-
-	return ret;
+	return pipeline_connect(comp, buffer, dir);
 }
 
 int ipc_pipeline_complete(struct ipc *ipc, uint32_t comp_id)
@@ -210,9 +199,10 @@ int ipc_pipeline_complete(struct ipc *ipc, uint32_t comp_id)
 	struct ipc_comp_dev *ipc_ppl_source;
 	struct ipc_comp_dev *ipc_ppl_sink;
 	int ret;
+	int core;
 
 	/* check whether pipeline exists */
-	ipc_pipe = ipc_get_comp_by_id(ipc, comp_id);
+	ipc_pipe = ipc_acquire_comp_by_id(ipc, comp_id);
 	if (!ipc_pipe) {
 		tr_err(&ipc_tr, "ipc: ipc_pipeline_complete looking for pipe component id %d failed",
 		       comp_id);
@@ -220,14 +210,17 @@ int ipc_pipeline_complete(struct ipc *ipc, uint32_t comp_id)
 	}
 
 	/* check core */
-	if (!cpu_is_me(ipc_pipe->core))
-		return ipc_process_on_core(ipc_pipe->core, false);
-
+	core = ipc_pipe->c.core;
+	if (!cpu_is_me(core)) {
+		ipc_release_comp(ipc_pipe);
+		return ipc_process_on_core(core);
+	}
 	p = ipc_pipe->pipeline;
 
 	/* find the scheduling component */
-	icd = ipc_get_comp_by_id(ipc, p->sched_id);
+	icd = ipc_acquire_comp_by_id_try(ipc, p->sched_id);
 	if (!icd) {
+		ipc_release_comp(ipc_pipe);
 		tr_err(&ipc_tr, "ipc_pipeline_complete(): cannot find the scheduling component, p->sched_id = %u",
 		       p->sched_id);
 		return -EINVAL;
@@ -236,16 +229,19 @@ int ipc_pipeline_complete(struct ipc *ipc, uint32_t comp_id)
 	if (icd->type != COMP_TYPE_COMPONENT) {
 		tr_err(&ipc_tr, "ipc_pipeline_complete(): icd->type (%d) != COMP_TYPE_COMPONENT for pipeline scheduling component icd->id %d",
 		       icd->type, icd->id);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_type;
 	}
 
-	if (icd->core != ipc_pipe->core) {
+	if (icd->c.core != ipc_pipe->c.core) {
 		tr_err(&ipc_tr, "ipc_pipeline_complete(): icd->core (%d) != ipc_pipe->core (%d) for pipeline scheduling component icd->id %d",
-		       icd->core, ipc_pipe->core, icd->id);
-		return -EINVAL;
+		       icd->c.core, ipc_pipe->c.core, icd->id);
+		ret = -EINVAL;
+		goto err_type;
 	}
 
 	p->sched_comp = icd->cd;
+	ipc_release_comp(icd);
 
 	pipeline_id = ipc_pipe->pipeline->pipeline_id;
 
@@ -256,45 +252,58 @@ int ipc_pipeline_complete(struct ipc *ipc, uint32_t comp_id)
 	ipc_ppl_source = ipc_get_ppl_src_comp(ipc, pipeline_id);
 	if (!ipc_ppl_source) {
 		tr_err(&ipc_tr, "ipc: ipc_pipeline_complete looking for pipeline source failed");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_type;
 	}
 
 	/* get pipeline sink component */
 	ipc_ppl_sink = ipc_get_ppl_sink_comp(ipc, pipeline_id);
 	if (!ipc_ppl_sink) {
 		tr_err(&ipc_tr, "ipc: ipc_pipeline_complete looking for pipeline sink failed");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_sink;
 	}
 
 	ret = pipeline_complete(ipc_pipe->pipeline, ipc_ppl_source->cd,
 				ipc_ppl_sink->cd);
 
+	ipc_release_comp(ipc_ppl_sink);
+err_sink:
+	ipc_release_comp(ipc_ppl_source);
+err_type:
+	ipc_release_comp(ipc_pipe);
 	return ret;
 }
 
 int ipc_comp_free(struct ipc *ipc, uint32_t comp_id)
 {
 	struct ipc_comp_dev *icd;
+	int core;
 
 	/* check whether component exists */
-	icd = ipc_get_comp_by_id(ipc, comp_id);
+	icd = ipc_acquire_comp_by_id(ipc, comp_id);
 	if (!icd)
 		return -ENODEV;
 
 	/* check core */
-	if (!cpu_is_me(icd->core))
-		return ipc_process_on_core(icd->core, false);
+	core = icd->c.core;
+	if (!cpu_is_me(core)) {
+		ipc_release_comp(icd);
+		return ipc_process_on_core(core);
+	}
+
+	icd = ipc_release_comp(icd);
 
 	/* check state */
-	if (icd->cd->state != COMP_STATE_READY)
+	if (icd->cd->state != COMP_STATE_READY) {
+		tr_err(&ipc_tr, "ipc_comp_free(): invalid comp state %d", icd->cd->state);
 		return -EINVAL;
+	}
 
 	/* free component and remove from list */
 	comp_free(icd->cd);
-
-	icd->cd = NULL;
-
-	list_item_del(&icd->list);
+	list_item_del(&icd->c.list);
+	rfree(icd->cd);
 	rfree(icd);
 
 	return 0;
