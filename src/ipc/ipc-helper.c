@@ -213,7 +213,7 @@ int ipc_pipeline_complete(struct ipc *ipc, uint32_t comp_id)
 	core = ipc_pipe->c.core;
 	if (!cpu_is_me(core)) {
 		ipc_release_comp(ipc_pipe);
-		return ipc_process_on_core(core);
+		return ipc_process_on_core(core, false);
 	}
 	p = ipc_pipe->pipeline;
 
@@ -289,7 +289,7 @@ int ipc_comp_free(struct ipc *ipc, uint32_t comp_id)
 	core = icd->c.core;
 	if (!cpu_is_me(core)) {
 		ipc_release_comp(icd);
-		return ipc_process_on_core(core);
+		return ipc_process_on_core(core, false);
 	}
 
 	icd = ipc_release_comp(icd);

@@ -143,7 +143,7 @@ static int idc_params(uint32_t comp_id)
 		(struct sof_ipc_stream_params *)payload;
 	int ret;
 
-	ipc_dev = ipc_get_comp_by_id(ipc, comp_id);
+	ipc_dev = ipc_acquire_comp_by_id(ipc, comp_id);
 	if (!ipc_dev)
 		return -ENODEV;
 
@@ -173,7 +173,7 @@ static int idc_prepare(uint32_t comp_id)
 	struct comp_dev *dev;
 	int ret;
 
-	ipc_dev = ipc_get_comp_by_id(ipc, comp_id);
+	ipc_dev = ipc_acquire_comp_by_id(ipc, comp_id);
 	if (!ipc_dev)
 		return -ENODEV;
 
@@ -221,7 +221,7 @@ static int idc_trigger(uint32_t comp_id)
 	uint32_t cmd = *(uint32_t *)payload;
 	int ret;
 
-	ipc_dev = ipc_get_comp_by_id(ipc, comp_id);
+	ipc_dev = ipc_acquire_comp_by_id(ipc, comp_id);
 	if (!ipc_dev)
 		return -ENODEV;
 
@@ -258,7 +258,7 @@ static int idc_reset(uint32_t comp_id)
 	struct ipc_comp_dev *ipc_dev;
 	int ret;
 
-	ipc_dev = ipc_get_comp_by_id(ipc, comp_id);
+	ipc_dev = ipc_acquire_comp_by_id(ipc, comp_id);
 	if (!ipc_dev)
 		return -ENODEV;
 

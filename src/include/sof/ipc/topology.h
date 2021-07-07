@@ -66,8 +66,9 @@ struct ipc_msg;
 
 /* IPC generic component device */
 struct ipc_comp_dev {
+	struct coherent c;
 	uint16_t type;	/* COMP_TYPE_ */
-	uint16_t core;
+	//uint16_t core;
 	uint32_t id;
 
 	/* component type data */
@@ -78,7 +79,7 @@ struct ipc_comp_dev {
 	};
 
 	/* lists */
-	struct list_item list;		/* list in components */
+	//struct list_item list;		/* list in components */
 };
 
 /**
@@ -154,12 +155,12 @@ int ipc_comp_connect(struct ipc *ipc, ipc_pipe_comp_connect *connect);
 int ipc_comp_disconnect(struct ipc *ipc, ipc_pipe_comp_connect *connect);
 
 /**
- * \brief Get component device from component ID.
+ * \brief Get component device from component ID and acquire cache lock.
  * @param ipc The global IPC context.
  * @param id The component ID.
  * @return Component device or NULL.
  */
-struct ipc_comp_dev *ipc_get_comp_by_id(struct ipc *ipc, uint32_t id);
+struct ipc_comp_dev *ipc_acquire_comp_by_id(struct ipc *ipc, uint32_t id);
 
 /**
  * \brief Get component device from pipeline ID and type.
@@ -168,7 +169,7 @@ struct ipc_comp_dev *ipc_get_comp_by_id(struct ipc *ipc, uint32_t id);
  * @param ppl_id The pipeline ID.
  * @return component device or NULL.
  */
-struct ipc_comp_dev *ipc_get_comp_by_ppl_id(struct ipc *ipc, uint16_t type,
+struct ipc_comp_dev *ipc_acquire_comp_by_ppl_id(struct ipc *ipc, uint16_t type,
 					    uint32_t ppl_id);
 /**
  * \brief Get buffer device from pipeline ID.
@@ -177,7 +178,7 @@ struct ipc_comp_dev *ipc_get_comp_by_ppl_id(struct ipc *ipc, uint16_t type,
  * @param dir Pipeline stream direction.
  * @return Pipeline device or NULL.
  */
-struct ipc_comp_dev *ipc_get_ppl_comp(struct ipc *ipc,
+struct ipc_comp_dev *ipc_acquire_ppl_comp(struct ipc *ipc,
 				      uint32_t pipeline_id, int dir);
 
 /**
@@ -218,4 +219,25 @@ int comp_verify_params(struct comp_dev *dev, uint32_t flag,
  */
 int comp_buffer_connect(struct comp_dev *comp, uint32_t comp_core,
 			struct comp_buffer *buffer, uint32_t buffer_core, uint32_t dir);
+
+/**
+ * \brief Acquire cache lock for component.
+ * @param cd The component.
+ */
+__must_check static inline struct ipc_comp_dev *ipc_acquire_comp(struct ipc_comp_dev *cd)
+{
+	struct coherent *c = coherent_acquire(&cd->c, sizeof(*cd));
+	return container_of(c, struct ipc_comp_dev, c);
+}
+
+/**
+ * \brief Release cache lock for component.
+ * @param cd The component.
+ */
+static inline struct ipc_comp_dev * ipc_release_comp(struct ipc_comp_dev *cd)
+{
+	struct coherent *c = coherent_release(&cd->c, sizeof(*cd));
+	return container_of(c, struct ipc_comp_dev, c);
+}
+
 #endif
