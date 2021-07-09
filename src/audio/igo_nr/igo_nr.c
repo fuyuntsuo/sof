@@ -28,6 +28,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define CONFIG_DEBUG 1
+#undef comp_dbg
+#define comp_dbg comp_info
+
 #define SOF_IGO_NR_MAX_SIZE 4096		/* Max size for coef data in bytes */
 
 enum IGO_NR_ENUM {

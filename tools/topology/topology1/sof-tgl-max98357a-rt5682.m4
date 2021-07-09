@@ -69,6 +69,8 @@ MUXDEMUX_CONFIG(demux_priv_1, 2, LIST(`	', `matrix1,', `matrix2'))
 # PCM99 <---- volume <---- DMIC01 (dmic 48k capture)
 # PCM100 <---- kpb <---- DMIC16K (dmic 16k capture)
 
+define(IGO, `')
+
 # Define pipeline id for sof-tgl-CODEC-rt5682.m4
 # to generate dmic setting with kwd when we have dmic
 # define channel
@@ -83,6 +85,8 @@ define(DMIC_PCM_16k_ID, `100')
 define(DMIC_PIPELINE_16k_ID, `11')
 define(DMIC_PIPELINE_KWD_ID, `12')
 define(DMIC_DAI_LINK_16k_ID, `2')
+# Offload DMIC_PIPELINE_48K to secondary core of TGL.
+define(DMIC_PIPELINE_48k_CORE_ID, 1)
 # define pcm, pipeline and dai id
 define(KWD_PIPE_SCH_DEADLINE_US, 5000)
 # include the generic dmic with kwd

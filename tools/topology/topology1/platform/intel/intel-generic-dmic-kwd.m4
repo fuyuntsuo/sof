@@ -56,7 +56,8 @@ ifdef(`IGO', `define(`INTEL_GENERIC_DMIC_KWD_PERIOD', 16000)', `define(`INTEL_GE
 ifdef(`DMIC_DAI_LINK_16k_PDM',`',`define(DMIC_DAI_LINK_16k_PDM, `STEREO_PDM0')')
 
 # define(DETECTOR_TYPE, `google-hotword-detect') define the detector type, default is the test detector
-ifdef(`DETECTOR_TYPE',`',define(DETECTOR_TYPE, `detect'))
+#ifdef(`DETECTOR_TYPE',`',define(DETECTOR_TYPE, `detect'))
+define(DETECTOR_TYPE, `detect')
 
 #
 # Define the pipelines

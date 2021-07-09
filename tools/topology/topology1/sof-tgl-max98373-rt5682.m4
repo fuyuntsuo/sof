@@ -66,7 +66,7 @@ define(`SMART_PCM_NAME', `smart373-spk')
 # UUID related
 DECLARE_SOF_RT_UUID("Maxim DSM", maxim_dsm_comp_uuid, 0x0cd84e80, 0xebd3,
                     0x11ea, 0xad, 0xc1, 0x02, 0x42, 0xac, 0x12, 0x00, 0x02);
-define(`SMART_UUID', maxim_dsm_comp_uuid)
+#define(`SMART_UUID', maxim_dsm_comp_uuid)
 # Include Smart Amplifier support
 include(`sof-smart-amplifier.m4')
 
@@ -88,6 +88,8 @@ define(DMIC_DAI_LINK_16k_ID, `2')
 define(DMIC_PIPELINE_48k_CORE_ID, 1)
 # define pcm, pipeline and dai id
 define(KWD_PIPE_SCH_DEADLINE_US, 20000)
+# Use the google hotword detector
+#define(DETECTOR_TYPE, `google-hotword-detect')
 # include the generic dmic with kwd
 include(`platform/intel/intel-generic-dmic-kwd.m4')
 
@@ -97,7 +99,7 @@ define(`BT_PIPELINE_CP_ID', eval(SMART_REF_PPL_ID + 2))
 define(`BT_DAI_LINK_ID', eval(SMART_BE_ID + 1))
 define(`BT_PCM_ID', `6')
 define(`HW_CONFIG_ID', `8')
-include(`platform/intel/intel-generic-bt.m4')
+#include(`platform/intel/intel-generic-bt.m4')
 
 dnl PIPELINE_PCM_ADD(pipeline,
 dnl     pipe id, pcm, max channels, format,
