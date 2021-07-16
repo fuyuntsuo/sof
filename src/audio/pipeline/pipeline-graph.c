@@ -163,9 +163,11 @@ int pipeline_connect(struct comp_dev *comp, struct comp_buffer *buffer,
 		comp_info(comp, "connect buffer %d as source", buffer->id);
 
 	irq_local_disable(flags);
+	buffer = buffer_acquire(buffer);
 	list_item_prepend(buffer_comp_list(buffer, dir),
 			  comp_buffer_list(comp, dir));
 	buffer_set_comp(buffer, comp, dir);
+	buffer_release(buffer);
 	irq_local_enable(flags);
 
 	return 0;
@@ -181,7 +183,9 @@ void pipeline_disconnect(struct comp_dev *comp, struct comp_buffer *buffer, int 
 		comp_info(comp, "disconnect buffer %d as source", buffer->id);
 
 	irq_local_disable(flags);
+	buffer = buffer_acquire(buffer);
 	list_item_del(buffer_comp_list(buffer, dir));
+	buffer_release(buffer);
 	irq_local_enable(flags);
 }
 
@@ -370,7 +374,9 @@ int pipeline_for_each_comp(struct comp_dev *current,
 		if (ctx->buff_func)
 			ctx->buff_func(buffer, ctx->buff_data);
 
+		buffer = buffer_acquire(buffer);
 		buffer_comp = buffer_get_comp(buffer, dir);
+		buffer = buffer_release(buffer);
 
 		/* don't go further if this component is not connected */
 		if (!buffer_comp ||

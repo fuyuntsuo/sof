@@ -314,7 +314,6 @@ static int ipc_stream_pcm_free(uint32_t header)
 	struct ipc *ipc = ipc_get();
 	struct sof_ipc_stream free_req;
 	struct ipc_comp_dev *pcm_dev;
-	int ret;
 	int core;
 
 	/* copy message with ABI safe method */
@@ -333,21 +332,19 @@ static int ipc_stream_pcm_free(uint32_t header)
 		ipc_release_comp(pcm_dev);
 		return ipc_process_on_core(core, false);
 	}
+	ipc_release_comp(pcm_dev);
 
 	tr_dbg(&ipc_tr, "ipc: comp %d -> free", free_req.comp_id);
 
 	/* sanity check comp */
 	if (!pcm_dev->cd->pipeline) {
-		ipc_release_comp(pcm_dev);
 		tr_err(&ipc_tr, "ipc: comp %d pipeline not found",
 		       free_req.comp_id);
 		return -EINVAL;
 	}
 
 	/* reset the pipeline */
-	ret = pipeline_reset(pcm_dev->cd->pipeline, pcm_dev->cd);
-	ipc_release_comp(pcm_dev);
-	return ret;
+	return pipeline_reset(pcm_dev->cd->pipeline, pcm_dev->cd);
 }
 
 /* get stream position */
