@@ -322,6 +322,7 @@ int ipc_pipeline_new(struct ipc *ipc, ipc_pipe_new *_pipe_desc)
 	if (ipc_pipe != NULL) {
 		tr_err(&ipc_tr, "ipc_pipeline_new(): pipeline already exists, pipe_desc->comp_id = %u",
 		       pipe_desc->comp_id);
+		ipc_release_comp(ipc_pipe);
 		return -EINVAL;
 	}
 
@@ -331,6 +332,7 @@ int ipc_pipeline_new(struct ipc *ipc, ipc_pipe_new *_pipe_desc)
 	if (ipc_pipe) {
 		tr_err(&ipc_tr, "ipc_pipeline_new(): pipeline id is already taken, pipe_desc->pipeline_id = %u",
 		       pipe_desc->pipeline_id);
+		ipc_release_comp(ipc_pipe);
 		return -EINVAL;
 	}
 
@@ -376,6 +378,8 @@ int ipc_pipeline_new(struct ipc *ipc, ipc_pipe_new *_pipe_desc)
 	/* add new pipeline to the list */
 	list_item_append(&ipc_pipe->c.list, &ipc->comp_list);
 
+	coherent_shared(ipc_pipe, c);
+
 	return 0;
 }
 
@@ -406,7 +410,7 @@ int ipc_pipeline_free(struct ipc *ipc, uint32_t comp_id)
 	}
 	ipc_pipe->pipeline = NULL;
 	list_item_del(&ipc_pipe->c.list);
-	ipc_release_comp(ipc_pipe);
+	ipc_pipe = ipc_release_comp(ipc_pipe);
 	rfree(ipc_pipe);
 	return 0;
 }
@@ -429,7 +433,6 @@ int ipc_buffer_new(struct ipc *ipc, const struct sof_ipc_buffer *desc)
 	/* register buffer with pipeline */
 	buffer = buffer_new(desc);
 	if (!buffer) {
-		ipc_release_comp(ibd);
 		tr_err(&ipc_tr, "ipc_buffer_new(): buffer_new() failed");
 		return -ENOMEM;
 	}
@@ -437,7 +440,6 @@ int ipc_buffer_new(struct ipc *ipc, const struct sof_ipc_buffer *desc)
 	ibd = rzalloc(SOF_MEM_ZONE_RUNTIME_SHARED, 0, SOF_MEM_CAPS_RAM,
 		      sizeof(struct ipc_comp_dev));
 	if (!ibd) {
-		ipc_release_comp(ibd);
 		buffer_free(buffer);
 		return -ENOMEM;
 	}
@@ -448,7 +450,8 @@ int ipc_buffer_new(struct ipc *ipc, const struct sof_ipc_buffer *desc)
 
 	/* add new buffer to the list */
 	list_item_append(&ibd->c.list, &ipc->comp_list);
-	ipc_release_comp(ibd);
+
+	coherent_shared(ibd, c);
 
 	return ret;
 }
@@ -476,8 +479,11 @@ int ipc_buffer_free(struct ipc *ipc, uint32_t buffer_id)
 	}
 
 	/* try to find sink/source components to check if they still exists */
-	list_for_coherent_item(clist, &ipc->comp_list, sizeof(*icd)) {
+	list_for_coherent_item_try(clist, &ipc->comp_list, sizeof(*icd)) {
 		icd = container_of(clist, struct ipc_comp_dev, c.list);
+		if (is_uncached(icd))
+			continue;
+
 		if (icd->type != COMP_TYPE_COMPONENT)
 			continue;
 
@@ -517,8 +523,9 @@ int ipc_buffer_free(struct ipc *ipc, uint32_t buffer_id)
 
 	/* free buffer and remove from list */
 	buffer_free(ibd->cb);
+	ibd = ipc_release_comp(ibd);
 	list_item_del(&ibd->c.list);
-	ipc_release_comp(ibd);
+	rfree(ibd->cb);
 	rfree(ibd);
 
 	return 0;
@@ -618,11 +625,11 @@ int ipc_comp_connect(struct ipc *ipc, ipc_pipe_comp_connect *_connect)
 		return -EINVAL;
 	}
 
-	icd_sink = ipc_acquire_comp_by_id(ipc, connect->sink_id);
+	icd_sink = ipc_acquire_comp_by_id_try(ipc, connect->sink_id);
 	if (!icd_sink) {
 		ipc_release_comp(icd_source);
 		tr_err(&ipc_tr, "ipc_comp_connect(): sink component does not exist, source_id = %d sink_id = %u",
-		       connect->sink_id, connect->source_id);
+		       connect->source_id, connect->sink_id);
 		return -EINVAL;
 	}
 
@@ -687,7 +694,8 @@ int ipc_comp_new(struct ipc *ipc, ipc_comp *_comp)
 
 	/* add new component to the list */
 	list_item_append(&icd->c.list, &ipc->comp_list);
+
+	coherent_shared(icd, c);
 out:
-	ipc_release_comp(icd);
 	return ret;
 }
