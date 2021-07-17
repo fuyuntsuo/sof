@@ -153,7 +153,7 @@ int ipc_comp_dai_config(struct ipc *ipc, struct ipc_config_dai *common_config,
 	struct ipc_comp_dev *icd;
 	struct list_item *clist;
 	int ret = -ENODEV;
-	int i;
+	int i, core;
 
 	tr_info(&ipc_tr, "ipc_comp_dai_config() dai type = %d index = %d",
 		config->type, config->dai_index);
@@ -161,24 +161,28 @@ int ipc_comp_dai_config(struct ipc *ipc, struct ipc_config_dai *common_config,
 	/* for each component */
 	list_for_coherent_item(clist, &ipc->comp_list, sizeof(*icd)) {
 		icd = container_of(clist, struct ipc_comp_dev, c.list);
+
 		/* make sure we only config DAI comps */
 		if (icd->type != COMP_TYPE_COMPONENT)
 			continue;
 
-		if (!cpu_is_me(icd->c.core)) {
-			comp_on_core[icd->c.core] = true;
+		core = icd->c.core;
+
+		/* we only care about DAI comp's */
+		if (dev_comp_type(icd->cd) != SOF_COMP_DAI &&
+		    dev_comp_type(icd->cd) != SOF_COMP_SG_DAI)
+			continue;
+
+		if (!cpu_is_me(core) && !cpu_is_secondary(cpu_get_id())) {
+			comp_on_core[core] = true;
 			ret = 0;
 			continue;
 		}
 
-		if (dev_comp_type(icd->cd) == SOF_COMP_DAI ||
-		    dev_comp_type(icd->cd) == SOF_COMP_SG_DAI) {
-
-			ret = comp_dai_config(icd->cd, common_config, spec_config);
-			if (ret < 0) {
-				ipc_release_comp(icd);
-				break;
-			}
+		ret = comp_dai_config(cache_to_uncache(icd->cd), common_config, spec_config);
+		if (ret < 0) {
+			ipc_release_comp(icd);
+			break;
 		}
 	}
 
