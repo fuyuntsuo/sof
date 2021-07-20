@@ -561,7 +561,6 @@ static void eq_iir_free(struct comp_dev *dev)
 	comp_data_blob_handler_free(cd->model_handler);
 
 	rfree(cd);
-	rfree(dev);
 }
 
 static int eq_iir_verify_params(struct comp_dev *dev,
