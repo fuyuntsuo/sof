@@ -96,6 +96,31 @@ static int parse_output_files(char *outputs, struct testbench_prm *tp)
 	return 0;
 }
 
+static int parse_pipelines(char *pipelines, struct testbench_prm *tp)
+{
+	char *output_token = NULL;
+	char *token = strtok_r(pipelines, ",", &output_token);
+	int index;
+
+	for (index = 0; index < MAX_OUTPUT_FILE_NUM && token; index++) {
+		/* get output file name with current index */
+		tp->pipelines[index] = atoi(token);
+
+		/* next output */
+		token = strtok_r(NULL, ",", &output_token);
+	}
+
+	if (index == MAX_OUTPUT_FILE_NUM && token) {
+		fprintf(stderr, "error: max output file number is %d\n",
+			MAX_OUTPUT_FILE_NUM);
+		return -EINVAL;
+	}
+
+	/* set total output file number */
+	tp->pipeline_num = index;
+	return 0;
+}
+
 /*
  * Parse shared library from user input
  * Currently only handles volume and src comp
@@ -156,22 +181,30 @@ static void print_usage(char *executable)
 }
 
 /* free components */
-static void free_comps(void)
+static void free_comps(int pipeline_id)
 {
 	struct list_item *clist;
 	struct list_item *temp;
 	struct ipc_comp_dev *icd = NULL;
 
+	/* remove the components for this pipeline */
 	list_for_item_safe(clist, temp, &sof_get()->ipc->comp_list) {
 		icd = container_of(clist, struct ipc_comp_dev, list);
+
 		switch (icd->type) {
 		case COMP_TYPE_COMPONENT:
+			if (icd->cd->pipeline->pipeline_id != pipeline_id)
+				break;
 			ipc_comp_free(sof_get()->ipc, icd->id);
 			break;
 		case COMP_TYPE_BUFFER:
+			if (icd->cb->pipeline_id != pipeline_id)
+				break;
 			ipc_buffer_free(sof_get()->ipc, icd->id);
 			break;
 		default:
+			if (icd->pipeline->pipeline_id != pipeline_id)
+				break;
 			ipc_pipeline_free(sof_get()->ipc, icd->id);
 			break;
 		}
@@ -183,7 +216,7 @@ static int parse_input_args(int argc, char **argv, struct testbench_prm *tp)
 	int option = 0;
 	int ret = 0;
 
-	while ((option = getopt(argc, argv, "hdi:o:t:b:a:r:R:c:C:P:V")) != -1) {
+	while ((option = getopt(argc, argv, "hdi:o:t:b:a:r:R:c:C:P:Vp:")) != -1) {
 		switch (option) {
 		/* input sample file */
 		case 'i':
@@ -247,6 +280,11 @@ static int parse_input_args(int argc, char **argv, struct testbench_prm *tp)
 			tp->num_vcores = atoi(optarg);
 			break;
 
+		/* output sample files */
+		case 'p':
+			ret = parse_pipelines(optarg, tp);
+			break;
+
 		/* print usage */
 		default:
 			fprintf(stderr, "unknown option %c\n", option);
@@ -270,40 +308,113 @@ struct pipeline_thread_data {
 	int core_id;
 };
 
-static int pipline_load_run(struct pipeline_thread_data *ptd)
+static int pipline_stop(struct pipeline_thread_data *ptd, struct tplg_context *ctx)
 {
 	struct testbench_prm *tp = ptd->tp;
-	struct tplg_context ctx;
-	int count = ptd->count;
 	struct ipc_comp_dev *pcm_dev;
 	struct pipeline *p;
-	struct pipeline *curr_p;
-	struct comp_dev *cd;
-	struct file_comp_data *frcd, *fwcd;
-	clock_t tic, toc;
-	double c_realtime, t_exec;
-	int n_in, n_out, ret;
-	int i, copy_count = tp->copy_iterations;
+	int err;
+
+	pcm_dev = ipc_get_comp_by_id(sof_get()->ipc, tp->sched_id);
+	p = pcm_dev->cd->pipeline;
+
+	err = tb_pipeline_stop(sof_get()->ipc, p, tp);
+	if (err < 0) {
+		exit(EXIT_FAILURE);
+	}
+
+	return 0;
+}
+
+static int pipline_reset(struct pipeline_thread_data *ptd, struct tplg_context *ctx)
+{
+	struct testbench_prm *tp = ptd->tp;
+	struct ipc_comp_dev *pcm_dev;
+	struct pipeline *p;
+	int err;
+
+	pcm_dev = ipc_get_comp_by_id(sof_get()->ipc, tp->sched_id);
+	p = pcm_dev->cd->pipeline;
+
+	err = tb_pipeline_reset(sof_get()->ipc, p, tp);
+	if (err < 0) {
+		exit(EXIT_FAILURE);
+	}
+
+	return 0;
+}
+
+static int pipline_start(struct pipeline_thread_data *ptd,
+		       struct tplg_context *ctx)
+{
+	struct testbench_prm *tp = ptd->tp;
+	struct ipc_comp_dev *pcm_dev;
+	struct pipeline *p;
+
+	/* Run pipeline until EOF from fileread */
+	pcm_dev = ipc_get_comp_by_id(sof_get()->ipc, tp->sched_id);
+	p = pcm_dev->cd->pipeline;
+
+	/* input and output sample rate */
+	if (!tp->fs_in)
+		tp->fs_in = p->period * p->frames_per_sched;
+
+	if (!tp->fs_out)
+		tp->fs_out = p->period * p->frames_per_sched;
+
+	/* set pipeline params and trigger start */
+	if (tb_pipeline_start(sof_get()->ipc, p, tp) < 0) {
+		fprintf(stderr, "error: pipeline params\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int pipline_load(struct pipeline_thread_data *ptd,
+			struct tplg_context *ctx, int pipeline_id)
+{
+	struct testbench_prm *tp = ptd->tp;
+	int ret;
 
 	/* setup the thread virtual core config */
-	memset(&ctx, 0, sizeof(ctx));
-	ctx.comp_id = 1000 * ptd->core_id;
-	ctx.core_id = ptd->core_id;
-	ctx.file = tp->file;
-	ctx.sof = sof_get();
-	ctx.tp = tp;
-	ctx.tplg_file = tp->tplg_file;
-
-	/* print test summary */
-	printf("==========================================================\n");
-	printf("		           Test Start %d\n", count);
-	printf("==========================================================\n");
+	memset(ctx, 0, sizeof(*ctx));
+	ctx->comp_id = 1000 * ptd->core_id;
+	ctx->core_id = ptd->core_id;
+	ctx->file = tp->file;
+	ctx->sof = sof_get();
+	ctx->tp = tp;
+	ctx->tplg_file = tp->tplg_file;
+	ctx->pipeline_id = pipeline_id;
 
 	/* parse topology file and create pipeline */
-	if (parse_topology(&ctx) < 0) {
+	ret = parse_topology(ctx);
+	if (ret < 0) {
 		fprintf(stderr, "error: parsing topology\n");
 		exit(EXIT_FAILURE);
 	}
+
+	return ret;
+}
+
+static void pipline_free(struct pipeline_thread_data *ptd,
+			struct tplg_context *ctx, int pipeline_id)
+{
+	free_comps(pipeline_id);
+}
+
+static void pipeline_stats(struct pipeline_thread_data *ptd,
+			   struct tplg_context *ctx, clock_t *tic,
+			   clock_t *toc)
+{
+	struct testbench_prm *tp = ptd->tp;
+	int count = ptd->count;
+	struct ipc_comp_dev *pcm_dev;
+	struct pipeline *p;
+	struct file_comp_data *frcd, *fwcd;
+	double c_realtime, t_exec;
+	int n_in, n_out;
+	int i;
 
 	/* Get pointer to filewrite */
 	pcm_dev = ipc_get_comp_by_id(sof_get()->ipc, tp->fw_id);
@@ -332,59 +443,10 @@ static int pipline_load_run(struct pipeline_thread_data *ptd)
 	if (!tp->fs_out)
 		tp->fs_out = p->period * p->frames_per_sched;
 
-	/* set pipeline params and trigger start */
-	if (tb_pipeline_start(sof_get()->ipc, p, tp) < 0) {
-		fprintf(stderr, "error: pipeline params\n");
-		free_comps();
-		return -EINVAL;
-	}
-
-	cd = pcm_dev->cd;
-	tb_enable_trace(false); /* reduce trace output */
-	tic = clock();
-
-	while (frcd->fs.reached_eof == 0) {
-		/*
-		 * Schedule copy for all pipelines which have the same schedule
-		 * component as the working one.
-		 *
-		 * In common convention pipelines are added with monotonic
-		 * increasing IDs started from 1, we could take care of it in
-		 * test topologies so this for-loop will walk all pipelines.
-		 */
-		for (i = 1; i <= tp->max_pipeline_id; i++) {
-			pcm_dev = ipc_get_comp_by_ppl_id(sof_get()->ipc,
-							 COMP_TYPE_PIPELINE, i);
-			if (pcm_dev) {
-				curr_p = pcm_dev->pipeline;
-				if (pipeline_is_same_sched_comp(p, curr_p))
-					pipeline_schedule_copy(curr_p, 0);
-			}
-		}
-
-		/* are we bailing out after a fixed number of iterations ? */
-		if (tp->copy_check) {
-			if (--copy_count == 0)
-				break;
-		}
-	}
-
-	if (!frcd->fs.reached_eof && !tp->copy_check)
-		printf("warning: possible pipeline xrun\n");
-
-	/* reset and free pipeline */
-	toc = clock();
-	tb_enable_trace(true);
-	pipeline_trigger(p, cd, COMP_TRIGGER_STOP);
-	ret = pipeline_reset(p, cd);
-	if (ret < 0) {
-		fprintf(stderr, "error: pipeline reset\n");
-		exit(EXIT_FAILURE);
-	}
 
 	n_in = frcd->fs.n;
 	n_out = fwcd->fs.n;
-	t_exec = (double)(toc - tic) / CLOCKS_PER_SEC;
+	t_exec = (double)(*toc - *tic) / CLOCKS_PER_SEC;
 	c_realtime = (double)n_out / tp->channels / tp->fs_out / t_exec;
 
 	/* print test summary */
@@ -404,32 +466,73 @@ static int pipline_load_run(struct pipeline_thread_data *ptd)
 	printf("Output sample count: %d\n", n_out);
 	printf("Total execution time: %.2f us, %.2f x realtime\n\n",
 	       1e3 * t_exec, c_realtime);
-
-	/* free all components/buffers in pipeline */
-	free_comps();
-
-	return 0;
 }
 
-static void *pipline_thread(void *data)
+/*
+ * Tester thread, one for each virtual core. This is NOT the thread that will
+ * execute the virtual core.
+ */
+static void *pipline_test(void *data)
 {
 	struct pipeline_thread_data *ptd = data;
 	struct testbench_prm *tp = ptd->tp;
 	int dp_count = 0;
+	struct timespec req;
+	struct tplg_context ctx;
+	clock_t tic, toc;
 	int err;
 
 	/* build, run and teardown pipelines */
 	while (dp_count < tp->dynamic_pipeline_iterations) {
-		fprintf(stdout, "pipeline run %d/%d\n", ++dp_count,
+		fprintf(stdout, "pipeline run %d/%d\n", dp_count,
 			tp->dynamic_pipeline_iterations);
 
-		err = pipline_load_run(ptd);
+		/* print test summary */
+		printf("==========================================================\n");
+		printf("		           Test Start %d\n", dp_count);
+		printf("==========================================================\n");
+
+		err = pipline_load(ptd, &ctx, tp->pipelines[0]);
+		if (err < 0) {
+			fprintf(stderr, "error: pipeline load %d failed %d\n",
+				dp_count, err);
+			break;
+		}
+
+		err = pipline_start(ptd, &ctx);
 		if (err < 0) {
 			fprintf(stderr, "error: pipeline run %d failed %d\n",
 				dp_count, err);
 			break;
 		}
+		tic = clock();
+
+		/* TODO: count teh delay iterations */
+		req.tv_nsec = 33000000;
+		req.tv_sec = 0;
+		nanosleep(&req, NULL);
+
+		err = pipline_stop(ptd, &ctx);
+		if (err < 0) {
+			fprintf(stderr, "error: pipeline stop %d failed %d\n",
+				dp_count, err);
+			break;
+		}
+		toc = clock();
+
+		pipeline_stats(ptd, &ctx, &tic, &toc);
+
+		err = pipline_reset(ptd, &ctx);
+		if (err < 0) {
+			fprintf(stderr, "error: pipeline stop %d failed %d\n",
+				dp_count, err);
+			break;
+		}
+
+		pipline_free(ptd, &ctx, tp->pipelines[0]);
+
 		ptd->count++;
+		dp_count++;
 	}
 
 	return NULL;
@@ -456,6 +559,8 @@ int main(int argc, char **argv)
 	tp.dynamic_pipeline_iterations = 1;
 	tp.num_vcores = 0;
 	tp.pipeline_string = calloc(1, DEBUG_MSG_LEN);
+	tp.pipelines[0] = 1;
+	tp.pipeline_num = 1;
 
 	/* command line arguments*/
 	err = parse_input_args(argc, argv, &tp);
@@ -496,7 +601,7 @@ int main(int argc, char **argv)
 		tp.num_vcores = 1;
 
 	/* initialize ipc and scheduler */
-	if (tb_pipeline_setup(sof_get()) < 0) {
+	if (tb_setup(sof_get()) < 0) {
 		fprintf(stderr, "error: pipeline init\n");
 		exit(EXIT_FAILURE);
 	}
@@ -507,17 +612,14 @@ int main(int argc, char **argv)
 		ptd[i].tp = &tp;
 		ptd[i].count = 0;
 		err = pthread_create(&hc.thread_id[i], NULL,
-				pipline_thread, &ptd[i]);
+				pipline_test, &ptd[i]);
 	}
 
-	/* wait for all threads to complete */
 	for (i = 0; i < tp.num_vcores; i++) {
-		if (hc.thread_id[i])
-			err = pthread_join(hc.thread_id[i], NULL);
+		err = pthread_join(hc.thread_id[i], NULL);
 	}
-
 	/* free other core FW services */
-	tb_pipeline_free(sof_get());
+	tb_free(sof_get());
 
 out:
 	/* free all other data */
@@ -535,7 +637,6 @@ out:
 		if (lib_table[i].handle)
 			dlclose(lib_table[i].handle);
 	}
-
 
 	return EXIT_SUCCESS;
 }

@@ -28,7 +28,7 @@
 
 /* testbench helper functions for pipeline setup and trigger */
 
-int tb_pipeline_setup(struct sof *sof)
+int tb_setup(struct sof *sof)
 {
 	/* init components */
 	sys_comp_init(sof);
@@ -36,8 +36,6 @@ int tb_pipeline_setup(struct sof *sof)
 	/* other necessary initializations, todo: follow better SOF init */
 	pipeline_posn_init(sof);
 	init_system_notify(sof);
-	scheduler_init_edf();
-	sa_init(sof, CONFIG_SYSTICK_PERIOD);
 
 	/* init IPC */
 	if (ipc_init(sof) < 0) {
@@ -45,11 +43,19 @@ int tb_pipeline_setup(struct sof *sof)
 		return -EINVAL;
 	}
 
-	/* init scheduler */
+	/* init LL scheduler */
+	if (scheduler_init_ll(NULL) < 0) {
+		fprintf(stderr, "error: edf scheduler init\n");
+		return -EINVAL;
+	}
+
+	/* init EDF scheduler */
 	if (scheduler_init_edf() < 0) {
 		fprintf(stderr, "error: edf scheduler init\n");
 		return -EINVAL;
 	}
+
+	//sa_init(sof, CONFIG_SYSTICK_PERIOD);
 
 	debug_print("ipc and scheduler initialized\n");
 
@@ -60,7 +66,7 @@ struct ipc_data {
 	struct ipc_data_host_buffer dh_buffer;
 };
 
-void tb_pipeline_free(struct sof *sof)
+void tb_free(struct sof *sof)
 {
 	struct schedule_data *sch;
 	struct schedulers **schedulers;
@@ -68,7 +74,7 @@ void tb_pipeline_free(struct sof *sof)
 	struct notify **notify = arch_notify_get();
 	struct ipc_data *iipc;
 
-	free(sof->sa);
+	//free(sof->sa);
 	free(*notify);
 
 	/* free all scheduler data */
@@ -129,6 +135,59 @@ int tb_pipeline_start(struct ipc *ipc, struct pipeline *p,
 		fprintf(stderr, "error: Failed to start pipeline command: %s\n",
 			strerror(ret));
 		return ret;
+	}
+
+	return ret;
+}
+
+/* set up pcm params, prepare and trigger pipeline */
+int tb_pipeline_stop(struct ipc *ipc, struct pipeline *p,
+		      struct testbench_prm *tp)
+{
+	struct ipc_comp_dev *pcm_dev;
+	struct comp_dev *cd;
+	int ret;
+
+	/* Get IPC component device for pipeline */
+	pcm_dev = ipc_get_comp_by_id(ipc, p->sched_id);
+	if (!pcm_dev) {
+		fprintf(stderr, "error: ipc get comp failed\n");
+		return -EINVAL;
+	}
+
+	/* Point to pipeline component device */
+	cd = pcm_dev->cd;
+
+	ret = pipeline_trigger(p, cd, COMP_TRIGGER_STOP);
+	if (ret < 0) {
+		fprintf(stderr, "error: Failed to stop pipeline command: %s\n",
+			strerror(ret));
+	}
+
+	return ret;
+}
+
+/* set up pcm params, prepare and trigger pipeline */
+int tb_pipeline_reset(struct ipc *ipc, struct pipeline *p,
+		      struct testbench_prm *tp)
+{
+	struct ipc_comp_dev *pcm_dev;
+	struct comp_dev *cd;
+	int ret;
+
+	/* Get IPC component device for pipeline */
+	pcm_dev = ipc_get_comp_by_id(ipc, p->sched_id);
+	if (!pcm_dev) {
+		fprintf(stderr, "error: ipc get comp failed\n");
+		return -EINVAL;
+	}
+
+	/* Point to pipeline component device */
+	cd = pcm_dev->cd;
+
+	ret = pipeline_reset(p, cd);
+	if (ret < 0) {
+		fprintf(stderr, "error: pipeline reset\n");
 	}
 
 	return ret;

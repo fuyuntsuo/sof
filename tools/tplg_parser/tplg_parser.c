@@ -150,18 +150,21 @@ int tplg_read_array(struct snd_soc_tplg_vendor_array *array, FILE *file)
 }
 
 /* load buffer DAPM widget */
-int tplg_load_buffer(int comp_id, int pipeline_id, int size,
-		     struct sof_ipc_buffer *buffer, FILE *file)
+int tplg_load_buffer(struct tplg_context *ctx,
+		     struct sof_ipc_buffer *buffer)
 {
 	struct snd_soc_tplg_vendor_array *array;
 	size_t read_size;
 	size_t parsed_size = 0;
+	FILE *file = ctx->file;
+	int size = ctx->widget->priv.size;
+	int comp_id = ctx->comp_id;
 	int ret;
 
 	/* configure buffer */
 	buffer->comp.core = 0;
 	buffer->comp.id = comp_id;
-	buffer->comp.pipeline_id = pipeline_id;
+	buffer->comp.pipeline_id = ctx->pipeline_id;
 	buffer->comp.hdr.cmd = SOF_IPC_GLB_TPLG_MSG | SOF_IPC_TPLG_BUFFER_NEW;
 	buffer->comp.type = SOF_COMP_BUFFER;
 	buffer->comp.hdr.size = sizeof(struct sof_ipc_buffer);
@@ -227,11 +230,14 @@ int tplg_load_buffer(int comp_id, int pipeline_id, int size,
 	return 0;
 }
 
-int tplg_load_pcm(int comp_id, int pipeline_id, int size, int dir,
-		  struct sof_ipc_comp_host *host, FILE *file)
+int tplg_load_pcm(struct tplg_context *ctx, int dir,
+		  struct sof_ipc_comp_host *host)
 {
 	struct snd_soc_tplg_vendor_array *array = NULL;
 	size_t total_array_size = 0, read_size;
+	FILE *file = ctx->file;
+	int size = ctx->widget->priv.size;
+	int comp_id = ctx->comp_id;
 	int ret;
 
 	/* configure host comp IPC message */
@@ -239,7 +245,7 @@ int tplg_load_pcm(int comp_id, int pipeline_id, int size, int dir,
 	host->comp.hdr.cmd = SOF_IPC_GLB_TPLG_MSG | SOF_IPC_TPLG_COMP_NEW;
 	host->comp.id = comp_id;
 	host->comp.type = SOF_COMP_HOST;
-	host->comp.pipeline_id = pipeline_id;
+	host->comp.pipeline_id = ctx->pipeline_id;
 	host->direction = dir;
 	host->config.hdr.size = sizeof(host->config);
 
@@ -300,11 +306,13 @@ int tplg_load_pcm(int comp_id, int pipeline_id, int size, int dir,
 }
 
 /* load dai component */
-int tplg_load_dai(int comp_id, int pipeline_id, int size,
-		  struct sof_ipc_comp_dai *comp_dai, FILE *file)
+int tplg_load_dai(struct tplg_context *ctx, struct sof_ipc_comp_dai *comp_dai)
 {
 	struct snd_soc_tplg_vendor_array *array;
 	size_t total_array_size = 0, read_size;
+	FILE *file = ctx->file;
+	int size = ctx->widget->priv.size;
+	int comp_id = ctx->comp_id;
 	int ret;
 
 	/* configure comp_dai */
@@ -312,7 +320,7 @@ int tplg_load_dai(int comp_id, int pipeline_id, int size,
 	comp_dai->comp.hdr.cmd = SOF_IPC_GLB_TPLG_MSG | SOF_IPC_TPLG_COMP_NEW;
 	comp_dai->comp.id = comp_id;
 	comp_dai->comp.type = SOF_COMP_DAI;
-	comp_dai->comp.pipeline_id = pipeline_id;
+	comp_dai->comp.pipeline_id = ctx->pipeline_id;
 	comp_dai->config.hdr.size = sizeof(comp_dai->config);
 
 	/* allocate memory for vendor tuple array */
@@ -373,11 +381,13 @@ int tplg_load_dai(int comp_id, int pipeline_id, int size,
 }
 
 /* load pda dapm widget */
-int tplg_load_pga(int comp_id, int pipeline_id, int size,
-		  struct sof_ipc_comp_volume *volume, FILE *file)
+int tplg_load_pga(struct tplg_context *ctx, struct sof_ipc_comp_volume *volume)
 {
 	struct snd_soc_tplg_vendor_array *array = NULL;
 	size_t total_array_size = 0, read_size;
+	FILE *file = ctx->file;
+	int size = ctx->widget->priv.size;
+	int comp_id = ctx->comp_id;
 	int ret;
 
 	/* allocate memory for vendor tuple array */
@@ -439,7 +449,7 @@ int tplg_load_pga(int comp_id, int pipeline_id, int size,
 	volume->comp.id = comp_id;
 	volume->comp.hdr.size = sizeof(struct sof_ipc_comp_volume);
 	volume->comp.type = SOF_COMP_VOLUME;
-	volume->comp.pipeline_id = pipeline_id;
+	volume->comp.pipeline_id = ctx->pipeline_id;
 	volume->config.hdr.size = sizeof(struct sof_ipc_comp_config);
 
 	free(array);
@@ -447,20 +457,21 @@ int tplg_load_pga(int comp_id, int pipeline_id, int size,
 }
 
 /* load scheduler dapm widget */
-int tplg_load_pipeline(int comp_id, int pipeline_id, int size,
-		       struct sof_ipc_pipe_new *pipeline, FILE *file)
+int tplg_load_pipeline(struct tplg_context *ctx,
+		       struct sof_ipc_pipe_new *pipeline)
 {
 	struct snd_soc_tplg_vendor_array *array = NULL;
 	size_t total_array_size = 0, read_size;
+	FILE *file = ctx->file;
+	int size = ctx->widget->priv.size;
+	int comp_id = ctx->comp_id;
 	int ret;
 
 	/* configure pipeline */
 	pipeline->comp_id = comp_id;
-	pipeline->pipeline_id = pipeline_id;
+	pipeline->pipeline_id = ctx->pipeline_id;
 	pipeline->hdr.size = sizeof(*pipeline);
 	pipeline->hdr.cmd = SOF_IPC_GLB_TPLG_MSG | SOF_IPC_TPLG_PIPE_NEW;
-	pipeline->comp_id = comp_id;
-	pipeline->pipeline_id = pipeline_id;
 
 	/* allocate memory for vendor tuple array */
 	array = (struct snd_soc_tplg_vendor_array *)malloc(size);
@@ -828,11 +839,14 @@ err:
 }
 
 /* load src dapm widget */
-int tplg_load_src(int comp_id, int pipeline_id, int size,
-		  struct sof_ipc_comp_src *src, FILE *file)
+int tplg_load_src(struct tplg_context *ctx,
+		  struct sof_ipc_comp_src *src)
 {
 	struct snd_soc_tplg_vendor_array *array = NULL;
 	size_t total_array_size = 0, read_size;
+	FILE *file = ctx->file;
+	int size = ctx->widget->priv.size;
+	int comp_id = ctx->comp_id;
 	int ret;
 
 	/* allocate memory for vendor tuple array */
@@ -900,7 +914,7 @@ int tplg_load_src(int comp_id, int pipeline_id, int size,
 	src->comp.id = comp_id;
 	src->comp.hdr.size = sizeof(struct sof_ipc_comp_src);
 	src->comp.type = SOF_COMP_SRC;
-	src->comp.pipeline_id = pipeline_id;
+	src->comp.pipeline_id = ctx->pipeline_id;
 	src->config.hdr.size = sizeof(struct sof_ipc_comp_config);
 
 	free(array);
@@ -908,12 +922,12 @@ int tplg_load_src(int comp_id, int pipeline_id, int size,
 }
 
 /* load asrc dapm widget */
-int tplg_load_asrc(int comp_id, int pipeline_id, int size,
-		   struct sof_ipc_comp_asrc *asrc, FILE *file)
+int tplg_load_asrc(struct tplg_context *ctx, struct sof_ipc_comp_asrc *asrc)
 {
 	struct snd_soc_tplg_vendor_array *array = NULL;
-	size_t total_array_size = 0, read_size;
-	int ret;
+	size_t total_array_size = 0, read_size, size = ctx->widget_size;
+	FILE *file = ctx->file;
+	int ret, comp_id = ctx->comp_id;
 
 	/* allocate memory for vendor tuple array */
 	array = (struct snd_soc_tplg_vendor_array *)malloc(size);
@@ -950,7 +964,7 @@ int tplg_load_asrc(int comp_id, int pipeline_id, int size,
 				       ARRAY_SIZE(comp_tokens), array,
 				       array->size);
 		if (ret != 0) {
-			fprintf(stderr, "error: parse asrc comp_tokens %d\n",
+			fprintf(stderr, "error: parse asrc comp_tokens %zu\n",
 				size);
 			free(MOVE_POINTER_BY_BYTES(array, -total_array_size));
 			return -EINVAL;
@@ -961,7 +975,7 @@ int tplg_load_asrc(int comp_id, int pipeline_id, int size,
 				       ARRAY_SIZE(asrc_tokens), array,
 				       array->size);
 		if (ret != 0) {
-			fprintf(stderr, "error: parse asrc tokens %d\n", size);
+			fprintf(stderr, "error: parse asrc tokens %zu\n", size);
 			free(MOVE_POINTER_BY_BYTES(array, -total_array_size));
 			return -EINVAL;
 		}
@@ -980,7 +994,7 @@ int tplg_load_asrc(int comp_id, int pipeline_id, int size,
 	asrc->comp.id = comp_id;
 	asrc->comp.hdr.size = sizeof(struct sof_ipc_comp_asrc);
 	asrc->comp.type = SOF_COMP_ASRC;
-	asrc->comp.pipeline_id = pipeline_id;
+	asrc->comp.pipeline_id = ctx->pipeline_id;
 	asrc->config.hdr.size = sizeof(struct sof_ipc_comp_config);
 
 	free(array);
@@ -988,13 +1002,16 @@ int tplg_load_asrc(int comp_id, int pipeline_id, int size,
 }
 
 /* load asrc dapm widget */
-int tplg_load_process(int comp_id, int pipeline_id, int size,
-		      struct sof_ipc_comp_process *process, FILE *file,
+int tplg_load_process(struct tplg_context *ctx,
+		      struct sof_ipc_comp_process *process,
 		      struct sof_ipc_comp_ext *comp_ext)
 {
 	struct snd_soc_tplg_vendor_array *array = NULL;
 	size_t total_array_size = 0;
 	size_t read_size;
+	FILE *file = ctx->file;
+	int size = ctx->widget->priv.size;
+	int comp_id = ctx->comp_id;
 	int ret;
 
 	/* allocate memory for vendor tuple array */
@@ -1075,7 +1092,7 @@ int tplg_load_process(int comp_id, int pipeline_id, int size,
 	process->comp.id = comp_id;
 	process->comp.hdr.size = sizeof(struct sof_ipc_comp_asrc);
 	process->comp.type = find_process_comp_type(process->type);
-	process->comp.pipeline_id = pipeline_id;
+	process->comp.pipeline_id = ctx->pipeline_id;
 	process->config.hdr.size = sizeof(struct sof_ipc_comp_config);
 
 	free(array);
@@ -1083,11 +1100,14 @@ int tplg_load_process(int comp_id, int pipeline_id, int size,
 }
 
 /* load mixer dapm widget */
-int tplg_load_mixer(int comp_id, int pipeline_id, int size,
-		    struct sof_ipc_comp_mixer *mixer, FILE *file)
+int tplg_load_mixer(struct tplg_context *ctx,
+		    struct sof_ipc_comp_mixer *mixer)
 {
 	struct snd_soc_tplg_vendor_array *array = NULL;
 	size_t total_array_size = 0, read_size;
+	FILE *file = ctx->file;
+	int size = ctx->widget->priv.size;
+	int comp_id = ctx->comp_id;
 	int ret;
 
 	/* allocate memory for vendor tuple array */
@@ -1145,7 +1165,7 @@ int tplg_load_mixer(int comp_id, int pipeline_id, int size,
 	mixer->comp.id = comp_id;
 	mixer->comp.hdr.size = sizeof(struct sof_ipc_comp_src);
 	mixer->comp.type = SOF_COMP_MIXER;
-	mixer->comp.pipeline_id = pipeline_id;
+	mixer->comp.pipeline_id = ctx->pipeline_id;
 	mixer->config.hdr.size = sizeof(struct sof_ipc_comp_config);
 
 	free(array);
@@ -1225,21 +1245,14 @@ int tplg_load_graph(int num_comps, int pipeline_id,
 
 /* load dapm widget */
 int load_widget(struct tplg_context *ctx)
-/*void *dev, int dev_type, struct comp_info *temp_comp_list,
-		int comp_id, int comp_index, int pipeline_id,
-		void *tp, int *sched_id, FILE *file) */
 {
-	//struct snd_soc_tplg_dapm_widget *widget = NULL;
 	struct comp_info *temp_comp_list = ctx->info;
 	int comp_index = ctx->info_index;
 	int comp_id = ctx->comp_id;
 	int ret = 0;
 
 	// tmp hack
-	void *dev = ctx->sof;
 	int dev_type = ctx->dev_type;
-	int pipeline_id = ctx->pipeline_id;
-	void *tp = ctx->tp;
 
 	if (!temp_comp_list) {
 		fprintf(stderr, "load_widget: temp_comp_list argument NULL\n");
@@ -1278,87 +1291,82 @@ int load_widget(struct tplg_context *ctx)
 	switch (ctx->widget->id) {
 
 	/* load pga widget */
-	case(SND_SOC_TPLG_DAPM_PGA):
-		if (load_pga(dev, comp_id, pipeline_id, tp, ctx->widget) < 0) {
+	case SND_SOC_TPLG_DAPM_PGA:
+		if (load_pga(ctx) < 0) {
 			fprintf(stderr, "error: load pga\n");
 			ret = -EINVAL;
 			goto exit;
 		}
 		break;
-	case(SND_SOC_TPLG_DAPM_AIF_IN):
-		if (load_aif_in_out(dev, comp_id, pipeline_id, ctx->widget,
-				    SOF_IPC_STREAM_PLAYBACK, tp) < 0) {
+	case SND_SOC_TPLG_DAPM_AIF_IN:
+		if (load_aif_in_out(ctx, SOF_IPC_STREAM_PLAYBACK) < 0) {
 			fprintf(stderr, "error: load AIF IN failed\n");
 			ret = -EINVAL;
 			goto exit;
 		}
 		break;
-	case(SND_SOC_TPLG_DAPM_AIF_OUT):
-		if (load_aif_in_out(dev, comp_id, pipeline_id, ctx->widget,
-				    SOF_IPC_STREAM_CAPTURE, tp) < 0) {
+	case SND_SOC_TPLG_DAPM_AIF_OUT:
+		if (load_aif_in_out(ctx, SOF_IPC_STREAM_CAPTURE) < 0) {
 			fprintf(stderr, "error: load AIF OUT failed\n");
 			ret = -EINVAL;
 			goto exit;
 		}
 		break;
-	case(SND_SOC_TPLG_DAPM_DAI_IN):
-		if (load_dai_in_out(dev, comp_id, pipeline_id, ctx->widget,
-				    SOF_IPC_STREAM_PLAYBACK, tp) < 0) {
+	case SND_SOC_TPLG_DAPM_DAI_IN:
+		if (load_dai_in_out(ctx, SOF_IPC_STREAM_PLAYBACK) < 0) {
 			fprintf(stderr, "error: load filewrite\n");
 			ret = -EINVAL;
 			goto exit;
 		}
 		break;
-	case(SND_SOC_TPLG_DAPM_DAI_OUT):
-		if (load_dai_in_out(dev, comp_id, pipeline_id, ctx->widget,
-				    SOF_IPC_STREAM_CAPTURE, tp) < 0) {
+	case SND_SOC_TPLG_DAPM_DAI_OUT:
+		if (load_dai_in_out(ctx, SOF_IPC_STREAM_CAPTURE) < 0) {
 			fprintf(stderr, "error: load filewrite\n");
 			ret = -EINVAL;
 			goto exit;
 		}
 		break;
-	case(SND_SOC_TPLG_DAPM_BUFFER):
-		if (load_buffer(dev, comp_id, pipeline_id, tp, ctx->widget) < 0) {
+	case SND_SOC_TPLG_DAPM_BUFFER:
+		if (load_buffer(ctx) < 0) {
 			fprintf(stderr, "error: load buffer\n");
 			ret = -EINVAL;
 			goto exit;
 		}
 		break;
-	case(SND_SOC_TPLG_DAPM_SCHEDULER):
+	case SND_SOC_TPLG_DAPM_SCHEDULER:
 		/* find comp id for scheduling comp */
 		if (dev_type == FUZZER_DEV)
 			ctx->sched_id = find_widget(temp_comp_list, comp_id,
 					ctx->widget->sname);
 
-		if (load_pipeline(dev, comp_id, pipeline_id, ctx->widget,
-				  ctx->sched_id, tp) < 0) {
+		if (load_pipeline(ctx) < 0) {
 			fprintf(stderr, "error: load pipeline\n");
 			ret = -EINVAL;
 			goto exit;
 		}
 		break;
-	case(SND_SOC_TPLG_DAPM_SRC):
-		if (load_src(dev, comp_id, pipeline_id, ctx->widget, tp, tp) < 0) {
+	case SND_SOC_TPLG_DAPM_SRC:
+		if (load_src(ctx) < 0) {
 			fprintf(stderr, "error: load src\n");
 			ret = -EINVAL;
 			goto exit;
 		}
 		break;
-	case(SND_SOC_TPLG_DAPM_ASRC):
-		if (load_asrc(dev, comp_id, pipeline_id, ctx->widget, tp, tp) < 0) {
+	case SND_SOC_TPLG_DAPM_ASRC:
+		if (load_asrc(ctx) < 0) {
 			fprintf(stderr, "error: load src\n");
 			ret = -EINVAL;
 			goto exit;
 		}
 		break;
-	case(SND_SOC_TPLG_DAPM_MIXER):
-		if (load_mixer(dev, comp_id, pipeline_id, ctx->widget, tp) < 0) {
+	case SND_SOC_TPLG_DAPM_MIXER:
+		if (load_mixer(ctx) < 0) {
 			fprintf(stderr, "error: load mixer\n");
 			ret = -EINVAL;
 			goto exit;
 		}
 		break;
-	case(SND_SOC_TPLG_DAPM_EFFECT):
+	case SND_SOC_TPLG_DAPM_EFFECT:
 		if (load_process(ctx) < 0) {
 			fprintf(stderr, "error: load effect\n");
 			ret = -EINVAL;
