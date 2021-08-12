@@ -181,7 +181,7 @@ static void print_usage(char *executable)
 }
 
 /* free components */
-static void free_comps(int pipeline_id)
+static void pipeline_free_comps(int pipeline_id)
 {
 	struct list_item *clist;
 	struct list_item *temp;
@@ -211,12 +211,90 @@ static void free_comps(int pipeline_id)
 	}
 }
 
+static void pipeline_set_test_limits(int pipeline_id, int max_copies, int max_samples)
+{
+	struct list_item *clist;
+	struct list_item *temp;
+	struct ipc_comp_dev *icd = NULL;
+	struct comp_dev *cd;
+	struct file_comp_data *fcd;
+
+	/* remove the components for this pipeline */
+	list_for_item_safe(clist, temp, &sof_get()->ipc->comp_list) {
+		icd = container_of(clist, struct ipc_comp_dev, list);
+
+		switch (icd->type) {
+		case COMP_TYPE_COMPONENT:
+			cd = icd->cd;
+			if (cd->pipeline->pipeline_id != pipeline_id)
+				break;
+
+			switch (cd->drv->type) {
+			case SOF_COMP_HOST:
+			case SOF_COMP_DAI:
+			case SOF_COMP_FILEREAD:
+			case SOF_COMP_FILEWRITE:
+				fcd = comp_get_drvdata(cd);
+				fcd->max_samples = max_samples;
+				fcd->max_copies = max_copies;
+				break;
+			default:
+				break;
+			}
+			break;
+		case COMP_TYPE_BUFFER:
+		default:
+			break;
+		}
+	}
+}
+
+static void pipeline_get_file_stats(int pipeline_id)
+{
+	struct list_item *clist;
+	struct list_item *temp;
+	struct ipc_comp_dev *icd = NULL;
+	struct comp_dev *cd;
+	struct file_comp_data *fcd;
+	unsigned long time;
+
+	/* remove the components for this pipeline */
+	list_for_item_safe(clist, temp, &sof_get()->ipc->comp_list) {
+		icd = container_of(clist, struct ipc_comp_dev, list);
+
+		switch (icd->type) {
+		case COMP_TYPE_COMPONENT:
+			cd = icd->cd;
+			if (cd->pipeline->pipeline_id != pipeline_id)
+				break;
+			switch (cd->drv->type) {
+			case SOF_COMP_HOST:
+			case SOF_COMP_DAI:
+			case SOF_COMP_FILEREAD:
+			case SOF_COMP_FILEWRITE:
+				fcd = comp_get_drvdata(cd);
+				time = cd->pipeline->pipe_task->start;
+				printf("file %s: samples %d copies %d total time %zu uS avg time %zu uS\n",
+						fcd->fs.fn, fcd->fs.n, fcd->fs.copy_count,
+						time, time / fcd->fs.copy_count);
+				break;
+			default:
+				break;
+			}
+			break;
+		case COMP_TYPE_BUFFER:
+		default:
+			break;
+		}
+	}
+}
+
 static int parse_input_args(int argc, char **argv, struct testbench_prm *tp)
 {
 	int option = 0;
 	int ret = 0;
 
-	while ((option = getopt(argc, argv, "hdi:o:t:b:a:r:R:c:C:P:Vp:")) != -1) {
+	while ((option = getopt(argc, argv, "hdi:o:t:b:a:r:R:c:C:P:Vp:T:D:")) != -1) {
 		switch (option) {
 		/* input sample file */
 		case 'i':
@@ -283,6 +361,16 @@ static int parse_input_args(int argc, char **argv, struct testbench_prm *tp)
 		/* output sample files */
 		case 'p':
 			ret = parse_pipelines(optarg, tp);
+			break;
+
+		/* ticks per millisec, 0 = realtime (tickless) */
+		case 'T':
+			tp->tick_period_us = atoi(optarg);
+			break;
+
+		/* pipeline duration in millisec, 0 = realtime (tickless) */
+		case 'D':
+			tp->pipeline_duration_ms = atoi(optarg);
 			break;
 
 		/* print usage */
@@ -362,6 +450,8 @@ static int pipline_start(struct pipeline_thread_data *ptd,
 	if (!tp->fs_out)
 		tp->fs_out = p->period * p->frames_per_sched;
 
+	pipeline_set_test_limits(ctx->pipeline_id, tp->copy_iterations, 0);
+
 	/* set pipeline params and trigger start */
 	if (tb_pipeline_start(sof_get()->ipc, p, tp) < 0) {
 		fprintf(stderr, "error: pipeline params\n");
@@ -369,6 +459,19 @@ static int pipline_start(struct pipeline_thread_data *ptd,
 	}
 
 	return 0;
+}
+
+static int pipline_get_state(struct pipeline_thread_data *ptd,
+		       struct tplg_context *ctx)
+{
+	struct testbench_prm *tp = ptd->tp;
+	struct ipc_comp_dev *pcm_dev;
+	struct pipeline *p;
+
+	/* Run pipeline until EOF from fileread */
+	pcm_dev = ipc_get_comp_by_id(sof_get()->ipc, tp->sched_id);
+	p = pcm_dev->cd->pipeline;
+	return p->pipe_task->state;
 }
 
 static int pipline_load(struct pipeline_thread_data *ptd,
@@ -400,19 +503,17 @@ static int pipline_load(struct pipeline_thread_data *ptd,
 static void pipline_free(struct pipeline_thread_data *ptd,
 			struct tplg_context *ctx, int pipeline_id)
 {
-	free_comps(pipeline_id);
+	pipeline_free_comps(pipeline_id);
 }
 
 static void pipeline_stats(struct pipeline_thread_data *ptd,
-			   struct tplg_context *ctx, clock_t *tic,
-			   clock_t *toc)
+			   struct tplg_context *ctx, uint64_t delta)
 {
 	struct testbench_prm *tp = ptd->tp;
 	int count = ptd->count;
 	struct ipc_comp_dev *pcm_dev;
 	struct pipeline *p;
 	struct file_comp_data *frcd, *fwcd;
-	double c_realtime, t_exec;
 	int n_in, n_out;
 	int i;
 
@@ -446,8 +547,6 @@ static void pipeline_stats(struct pipeline_thread_data *ptd,
 
 	n_in = frcd->fs.n;
 	n_out = fwcd->fs.n;
-	t_exec = (double)(*toc - *tic) / CLOCKS_PER_SEC;
-	c_realtime = (double)n_out / tp->channels / tp->fs_out / t_exec;
 
 	/* print test summary */
 	printf("==========================================================\n");
@@ -455,6 +554,8 @@ static void pipeline_stats(struct pipeline_thread_data *ptd,
 	printf("==========================================================\n");
 	printf("Test Pipeline:\n");
 	printf("%s\n", tp->pipeline_string);
+	pipeline_get_file_stats(ctx->pipeline_id);
+
 	printf("Input bit format: %s\n", tp->bits_in);
 	printf("Input sample rate: %d\n", tp->fs_in);
 	printf("Output sample rate: %d\n", tp->fs_out);
@@ -462,10 +563,10 @@ static void pipeline_stats(struct pipeline_thread_data *ptd,
 		printf("Output[%d] written to file: \"%s\"\n",
 		       i, tp->output_file[i]);
 	}
-	printf("Input sample count: %d\n", n_in);
-	printf("Output sample count: %d\n", n_out);
-	printf("Total execution time: %.2f us, %.2f x realtime\n\n",
-	       1e3 * t_exec, c_realtime);
+	printf("Input sample (frame) count: %d (%d)\n", n_in, n_in / tp->channels);
+	printf("Output sample (frame) count: %d (%d)\n", n_out, n_out / tp->channels);
+	printf("Total execution time: %zu us, %.2f x realtime\n\n",
+	       delta, (double) ((double)n_out / tp->channels / tp->fs_out) * 1000000 / delta);
 }
 
 /*
@@ -477,10 +578,12 @@ static void *pipline_test(void *data)
 	struct pipeline_thread_data *ptd = data;
 	struct testbench_prm *tp = ptd->tp;
 	int dp_count = 0;
-	struct timespec req;
 	struct tplg_context ctx;
-	clock_t tic, toc;
+	struct timespec ts;
+	struct timespec td0, td1;
 	int err;
+	int nsleep_time;
+	uint64_t delta;
 
 	/* build, run and teardown pipelines */
 	while (dp_count < tp->dynamic_pipeline_iterations) {
@@ -505,22 +608,42 @@ static void *pipline_test(void *data)
 				dp_count, err);
 			break;
 		}
-		tic = clock();
+		clock_gettime(CLOCK_MONOTONIC, &td0);
 
-		/* TODO: count teh delay iterations */
-		req.tv_nsec = 33000000;
-		req.tv_sec = 0;
-		nanosleep(&req, NULL);
+		/* sleep to let the pipeline work - we exit at timeout OR
+		 * if copy iterations OR max_samples is reached (whatever first)
+		 */
+		nsleep_time = 0;
+		ts.tv_sec = tp->tick_period_us / 1000000;
+		ts.tv_nsec = (tp->tick_period_us % 1000000) * 1000;
+		while (nsleep_time < tp->pipeline_duration_ms * tp->copy_iterations) {
+			/* wait for next tick */
+			err = nanosleep(&ts, &ts);
+			if (err == 0) {
+				nsleep_time += tp->tick_period_us; /* sleep fully completed */
+				if (pipline_get_state(ptd, &ctx) != SOF_TASK_STATE_QUEUED)
+					goto stop;
+			} else if (err == EINTR)
+				continue; /* interrupted - keep going */
+			else {
+				printf("error: sleep failed: %s\n", strerror(err));
+				goto stop;
+			}
+		}
 
+stop:
+		clock_gettime(CLOCK_MONOTONIC, &td1);
 		err = pipline_stop(ptd, &ctx);
 		if (err < 0) {
 			fprintf(stderr, "error: pipeline stop %d failed %d\n",
 				dp_count, err);
 			break;
 		}
-		toc = clock();
 
-		pipeline_stats(ptd, &ctx, &tic, &toc);
+		delta = (td1.tv_sec - td0.tv_sec) * 1000000;
+		delta += (td1.tv_nsec - td0.tv_nsec) / 1000;
+
+		pipeline_stats(ptd, &ctx, delta);
 
 		err = pipline_reset(ptd, &ctx);
 		if (err < 0) {
@@ -543,6 +666,8 @@ int main(int argc, char **argv)
 	struct testbench_prm tp;
 	struct pipeline_thread_data ptd[CACHE_VCORE_COUNT];
 	int i, err;
+	pthread_attr_t attr;
+	struct sched_param param;
 
 	/* initialize input and output sample rates, files, etc. */
 	tp.fs_in = 0;
@@ -561,6 +686,8 @@ int main(int argc, char **argv)
 	tp.pipeline_string = calloc(1, DEBUG_MSG_LEN);
 	tp.pipelines[0] = 1;
 	tp.pipeline_num = 1;
+	tp.tick_period_us = 1000;
+	tp.pipeline_duration_ms = 5000;
 
 	/* command line arguments*/
 	err = parse_input_args(argc, argv, &tp);
@@ -600,8 +727,10 @@ int main(int argc, char **argv)
 	} else if (!tp.num_vcores)
 		tp.num_vcores = 1;
 
+	tb_enable_trace(true);
+
 	/* initialize ipc and scheduler */
-	if (tb_setup(sof_get()) < 0) {
+	if (tb_setup(sof_get(), &tp) < 0) {
 		fprintf(stderr, "error: pipeline init\n");
 		exit(EXIT_FAILURE);
 	}
@@ -611,10 +740,43 @@ int main(int argc, char **argv)
 		ptd[i].core_id = i;
 		ptd[i].tp = &tp;
 		ptd[i].count = 0;
-		err = pthread_create(&hc.thread_id[i], NULL,
+
+		err = pthread_attr_init(&attr);
+	        if (err) {
+	        	printf("error: cant create thread attr %d %s\n",
+	        		err, strerror(err));
+	                goto join;
+	        }
+
+		err = pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
+		if (err ) {
+			printf("error: cant set thread policy %d %s\n",
+				err, strerror(err));
+			goto join;
+		}
+		param.sched_priority = 80;
+		err = pthread_attr_setschedparam(&attr, &param);
+		if (err) {
+			printf("error: cant set thread sched param %d %s\n",
+				err, strerror(err));
+			goto join;
+		}
+		err = pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+		if (err) {
+			printf("error: cant set thread inherit %d %s\n",
+				err, strerror(err));
+			goto join;
+		}
+		err = pthread_create(&hc.thread_id[i], &attr,
 				pipline_test, &ptd[i]);
+		if (err) {
+			printf("error: cant create thread %d %s\n",
+				err, strerror(err));
+			goto join;
+		}
 	}
 
+join:
 	for (i = 0; i < tp.num_vcores; i++) {
 		err = pthread_join(hc.thread_id[i], NULL);
 	}

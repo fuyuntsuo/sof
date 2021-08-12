@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <sof/schedule/schedule.h>
 #include <sof/schedule/ll_schedule.h>
+#include <sof/schedule/ll_schedule_domain.h>
 #include <sof/lib/wait.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -27,10 +28,10 @@ struct ll_vcore {
 	struct list_item list; /* list of tasks in priority queue */
 	pthread_mutex_t list_mutex;
 	pthread_t thread_id;
-	pthread_cond_t systick_cond;
-	pthread_mutex_t systick_mutex;
 	int vcore_ready;
 };
+
+static int tick_period_us;
 
 inline void ts_add_ns(struct timespec* ts, uint64_t nsecs)
 {
@@ -49,24 +50,32 @@ inline void ts_nearest(struct timespec* ts, uint64_t nsecs, uint64_t nearest)
 static void *ll_thread(void *data)
 {
 	struct ll_vcore *vc = data;
-	struct timespec tv;
+	struct timespec ts, td0, td1;
 	struct list_item *tlist, *tlist_;
 	struct task *task;
+	int err;
+	uint64_t delta;
 
-	pthread_cond_init(&vc->systick_cond, NULL);
-	clock_gettime(CLOCK_REALTIME, &tv);
-
-	/* schedule on a milisecond boundary to the neareast ms from now */
-	ts_nearest(&tv, 1000000, 1000000);
+	ts.tv_sec = tick_period_us / 1000000;
+	ts.tv_nsec = (tick_period_us % 1000000) * 1000;
 
 	while (1) {
 
-		/* wait for the next tick */
-		pthread_mutex_lock(&vc->systick_mutex);
-		pthread_cond_timedwait(&vc->systick_cond, &vc->systick_mutex, &tv);
+		if (tick_period_us) {
+			while (1) {
+				/* wait for next tick */
+				err = nanosleep(&ts, &ts);
+				if (err == 0)
+					break; /* sleep fully completed */
+				else if (err == EINTR)
+					continue; /* interrupted - keep going */
+				else {
+					printf("error: sleep failed: %s\n", strerror(err));
+					goto out;
+				}
+			}
+		}
 
-		/* wait for next millisecond */
-		ts_add_ns(&tv, 1000000);
 		pthread_mutex_lock(&vc->list_mutex);
 
 		/* list empty then return */
@@ -81,15 +90,20 @@ static void *ll_thread(void *data)
 
 			if (task->state == SOF_TASK_STATE_QUEUED) {
 				pthread_mutex_unlock(&vc->list_mutex);
+				clock_gettime(CLOCK_MONOTONIC, &td0);
 				task->ops.run(task->data);
+				clock_gettime(CLOCK_MONOTONIC, &td1);
 				pthread_mutex_lock(&vc->list_mutex);
+				delta = (td1.tv_sec - td0.tv_sec) * 1000000;
+				delta += (td1.tv_nsec - td0.tv_nsec) / 1000;
+				task->start += delta;
 			}
 		}
 
 		pthread_mutex_unlock(&vc->list_mutex);
-		pthread_mutex_unlock(&vc->systick_mutex);
 	}
 
+out:
 	vc->vcore_ready = 0;
 	return NULL;
 }
@@ -117,6 +131,7 @@ static int schedule_ll_task(void *data, struct task *task, uint64_t start,
 	pthread_mutex_lock(&vc->list_mutex);
 	list_item_prepend(&task->list, &vc->list);
 	task->state = SOF_TASK_STATE_QUEUED;
+	task->start = 0;
 	pthread_mutex_unlock(&vc->list_mutex);
 
 	/* is vcore thread running ? */
@@ -148,7 +163,12 @@ static int schedule_ll_task_cancel(void *data, struct task *task)
 		task->state = SOF_TASK_STATE_CANCEL;
 		list_item_del(&task->list);
 	}
-	pthread_mutex_unlock(&vc->list_mutex);
+	/* list empty then return */
+	if (list_is_empty(&vc->list)) {
+		pthread_mutex_unlock(&vc->list_mutex);
+		pthread_join(vc->thread_id, NULL);
+	} else
+		pthread_mutex_unlock(&vc->list_mutex);
 
 	return 0;
 }
@@ -196,7 +216,7 @@ int scheduler_init_ll(struct ll_schedule_domain *domain)
 	int i;
 
 	tr_info(&ll_tr, "ll_scheduler_init()");
-
+	tick_period_us = domain->next_tick;
 
 	vcore = calloc(sizeof(*vcore), CONFIG_CORE_COUNT);
 	if (!vcore)
@@ -210,3 +230,4 @@ int scheduler_init_ll(struct ll_schedule_domain *domain)
 
 	return 0;
 }
+

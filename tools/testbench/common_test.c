@@ -19,6 +19,8 @@
 #include <sof/lib/dai.h>
 #include <sof/lib/dma.h>
 #include <sof/schedule/edf_schedule.h>
+#include <sof/schedule/ll_schedule.h>
+#include <sof/schedule/ll_schedule_domain.h>
 #include <sof/schedule/schedule.h>
 #include <sof/lib/wait.h>
 #include <sof/audio/pipeline.h>
@@ -28,8 +30,12 @@
 
 /* testbench helper functions for pipeline setup and trigger */
 
-int tb_setup(struct sof *sof)
+int tb_setup(struct sof *sof, struct testbench_prm *tp)
 {
+	struct ll_schedule_domain domain = {0};
+
+	domain.next_tick = tp->tick_period_us;
+
 	/* init components */
 	sys_comp_init(sof);
 
@@ -44,7 +50,7 @@ int tb_setup(struct sof *sof)
 	}
 
 	/* init LL scheduler */
-	if (scheduler_init_ll(NULL) < 0) {
+	if (scheduler_init_ll(&domain) < 0) {
 		fprintf(stderr, "error: edf scheduler init\n");
 		return -EINVAL;
 	}
@@ -54,8 +60,6 @@ int tb_setup(struct sof *sof)
 		fprintf(stderr, "error: edf scheduler init\n");
 		return -EINVAL;
 	}
-
-	//sa_init(sof, CONFIG_SYSTICK_PERIOD);
 
 	debug_print("ipc and scheduler initialized\n");
 
@@ -74,7 +78,6 @@ void tb_free(struct sof *sof)
 	struct notify **notify = arch_notify_get();
 	struct ipc_data *iipc;
 
-	//free(sof->sa);
 	free(*notify);
 
 	/* free all scheduler data */

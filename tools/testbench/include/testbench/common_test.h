@@ -54,6 +54,8 @@ struct testbench_prm {
 	bool copy_check;
 	int dynamic_pipeline_iterations;
 	int num_vcores;
+	int tick_period_us;
+	int pipeline_duration_ms;
 
 	FILE *file;
 	char *pipeline_string;
@@ -79,7 +81,7 @@ void sys_comp_file_init(void);
 
 void sys_comp_filewrite_init(void);
 
-int tb_setup(struct sof *sof);
+int tb_setup(struct sof *sof, struct testbench_prm *tp);
 void tb_free(struct sof *sof);
 
 int tb_pipeline_start(struct ipc *ipc, struct pipeline *p,
