@@ -29,7 +29,7 @@
 #include <ipc/trace.h>
 
 /* main firmware context */
-static struct sof sof;
+static SHARED_DATA struct sof sof;
 
 struct sof *sof_get(void)
 {
