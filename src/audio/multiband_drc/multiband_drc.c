@@ -258,6 +258,7 @@ static struct comp_dev *multiband_drc_new(const struct comp_driver *drv,
 
 	comp_set_drvdata(dev, cd);
 
+	cd->process_enabled = false;
 	cd->multiband_drc_func = NULL;
 	cd->crossover_split = NULL;
 
@@ -338,6 +339,32 @@ static int multiband_drc_cmd_get_data(struct comp_dev *dev,
 	return ret;
 }
 
+static int multiband_drc_cmd_get_value(struct comp_dev *dev,
+				       struct sof_ipc_ctrl_data *cdata)
+{
+	struct multiband_drc_comp_data *cd = comp_get_drvdata(dev);
+	int j;
+	int ret = 0;
+
+	switch (cdata->cmd) {
+	case SOF_CTRL_CMD_SWITCH:
+		comp_dbg(dev, "multiband_drc_cmd_get_value(), SOF_CTRL_CMD_SWITCH");
+		for (j = 0; j < cdata->num_elems; j++) {
+			cdata->chanv[j].channel = j;
+			cdata->chanv[j].value = cd->process_enabled;
+			comp_info(dev, "multiband_drc_cmd_get_value(), channel = %u, value = %u",
+				  cdata->chanv[j].channel,
+				  cdata->chanv[j].value);
+		}
+		break;
+	default:
+		comp_err(dev, "multiband_drc_cmd_get_value() error: invalid cdata->cmd");
+		ret = -EINVAL;
+		break;
+	}
+	return ret;
+}
+
 static int multiband_drc_cmd_set_data(struct comp_dev *dev,
 				      struct sof_ipc_ctrl_data *cdata)
 {
@@ -358,6 +385,31 @@ static int multiband_drc_cmd_set_data(struct comp_dev *dev,
 	return ret;
 }
 
+static int multiband_drc_cmd_set_value(struct comp_dev *dev,
+				       struct sof_ipc_ctrl_data *cdata)
+{
+	struct multiband_drc_comp_data *cd = comp_get_drvdata(dev);
+	int j;
+	int ret = 0;
+
+	switch (cdata->cmd) {
+	case SOF_CTRL_CMD_SWITCH:
+		comp_dbg(dev, "multiband_drc_cmd_set_value(), SOF_CTRL_CMD_SWITCH");
+		for (j = 0; j < cdata->num_elems; j++) {
+			cd->process_enabled = cdata->chanv[j].value;
+		}
+		comp_info(dev, "multiband_drc_cmd_set_value(), set process to %s mode",
+			  cd->process_enabled ? "enabled" : "passthrough");
+		break;
+	default:
+		comp_err(dev, "multiband_drc_cmd_set_value() error: invalid cdata->cmd");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
 static int multiband_drc_cmd(struct comp_dev *dev, int cmd, void *data, int max_data_size)
 {
 	struct sof_ipc_ctrl_data *cdata = ASSUME_ALIGNED(data, 4);
@@ -371,6 +423,12 @@ static int multiband_drc_cmd(struct comp_dev *dev, int cmd, void *data, int max_
 		break;
 	case COMP_CMD_GET_DATA:
 		ret = multiband_drc_cmd_get_data(dev, cdata, max_data_size);
+		break;
+	case COMP_CMD_SET_VALUE:
+		ret = multiband_drc_cmd_set_value(dev, cdata);
+		break;
+	case COMP_CMD_GET_VALUE:
+		ret = multiband_drc_cmd_get_value(dev, cdata);
 		break;
 	default:
 		comp_err(dev, "multiband_drc_cmd(), invalid command");
@@ -475,7 +533,7 @@ static int multiband_drc_prepare(struct comp_dev *dev)
 	comp_dbg(dev, "multiband_drc_prepare(), source_format=%d, sink_format=%d",
 		 cd->source_format, cd->source_format);
 	cd->config = comp_get_data_blob(cd->model_handler, NULL, NULL);
-	if (cd->config) {
+	if (cd->config && cd->process_enabled) {
 		ret = multiband_drc_setup(cd, sourceb->stream.channels, sourceb->stream.rate);
 		if (ret < 0) {
 			comp_err(dev, "multiband_drc_prepare() error: multiband_drc_setup failed.");
